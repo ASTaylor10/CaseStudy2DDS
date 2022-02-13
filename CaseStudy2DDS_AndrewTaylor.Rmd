@@ -1,0 +1,972 @@
+---
+###############################################################################
+#                                                                             #
+#                        Project: CaseStudy2DDS                               #
+#                         Author: Andrew Taylor                               #
+#                             Date: 2/12/2022                                 #
+#                                                                             #
+#  Link - GitHub:                                                             #
+#                                                                             #
+#  Link - Video Presentation: https://www.youtube.com/watch?v=9OiLYhPkyX8     #
+#                                                                             #
+###############################################################################
+
+########################### EXECUTIVE SUMMARY #################################
+#                                                                             #
+# The intent of this Project is to provide the leaders at Frito-Lay with      # 
+# insight into Employee Attrition (turnover) at their company.  The project   #
+# will also analyze the contributors that relate to Employee salaries from the#
+# dataset provided.  After tidying and exploring the data, the top 3 factors  #
+# that correlate to both Attrition and Monthly Income will be identified.     #
+# From there, these variables and others will be used to build a model which  #
+# can predict the Attrition case and average monthly income given a new set   #
+# of unlabeled data.  The goal is to achieve an Attrition model that achieves #
+# at least 60% Specificity and Sensitivity.  For Income predictions, the goal #
+# is attain an RMSE less than $3000.                                          #
+#                                                                             #
+###############################################################################
+
+############################## INTRODUCTION ###################################
+#                                                                             #
+# The following RMarkdown file is divided into the following sections:        #
+#                                                                             #
+# Libraries - R libraries used in the code                                    #
+# Imports - imports the 3 provided datasets                                   #
+# Tidy Data - manipulation of datasets for further analysis                   #
+# EDA - Exploratory Data Analysis to find trends and assess correlation       #
+# K-NN - Model to predict Attrition                                           #
+# Naive Bayes - Model to predict Attrition                                    #
+# Random Forest - Model to predict Attrition                                  #
+# Attrition Predictions - Applying Random Forest model to Competitive DataSet #
+# Linear Regression - Apply simple LR to Salary data                          #
+# Salary Prediction Algorithm - Model to predict Salary                       #
+# Salary Predictions - Applying LR Algorithm model to Competitive DataSet     #
+# Export CSV Files - Write Competitive set predictions to CSV files           #
+#                                                                             #
+###############################################################################
+---
+```{r}
+################################ LIBRARIES ####################################
+
+library(e1071) # Naive Bayes
+library(tidyr) # Tidy Data
+library(plyr) # Tidy Data
+library(class) # Data Training
+library(caret) # Data Training
+library(dplyr) # Tidy Data
+library(ggplot2) # Plotting
+library(GGally)
+library(plotly)
+library(reshape2)
+library("Hmisc") # Correlation Matrix
+library(corrplot) # Correlation Plot
+library("PerformanceAnalytics") # Correlation Matrix Chart
+library(randomForest)
+library(ggcorrplot)
+library(corrr)
+library(knitr)
+library(scales)
+library(forcats)
+
+###############################################################################
+```
+
+```{r}
+################################ IMPORTS ######################################
+
+Employees <- read.csv(file.choose(), header=TRUE)
+CompAtt <- read.csv(file.choose(), header=TRUE)
+CompSal <- read.csv(file.choose(), header=TRUE)
+
+###############################################################################
+```
+
+```{r}
+################################ TIDY DATA ####################################
+
+summary(Employees) # Check for missing or N/A values
+sapply(Employees, class) # check class type of each variable
+
+Employees <- Employees %>%
+  select(-EmployeeCount, -Over18, -StandardHours) %>% # Remove meaningless variables
+  mutate(Attrit = case_when(Attrition == "Yes" ~ 1,
+                            Attrition == "No" ~ 0)) # Create numeric Attrition variable
+
+EmpAdd <- Employees %>% # Create new dataset with added variables (numeric bins of categorical variables)
+  mutate(Sex = case_when(Gender == 'Male' ~ 1,
+                         Gender == 'Female' ~ 0)) %>%
+  mutate(Travel = case_when(BusinessTravel == 'Non-Travel' ~ 0,
+                            BusinessTravel == 'Travel_Rarely' ~ 1,
+                            BusinessTravel == 'Travel_Frequently' ~ 2)) %>%							
+  mutate(Dept = case_when(Department == 'Human Resources' ~ 1,
+                          Department == 'Research & Development' ~ 2,
+                          Department == 'Sales' ~ 3)) %>%
+  mutate(Degree = case_when(EducationField == 'Human Resources' ~ 1,
+                            EducationField == 'Life Sciences' ~ 2,
+                            EducationField == 'Marketing' ~ 3,
+                            EducationField == 'Medical' ~ 4,
+                            EducationField == 'Other' ~ 5,
+                            EducationField == 'Technical Degree' ~ 6))	 %>%
+  mutate(Job = case_when(JobRole == 'Human Resources' ~ 1,
+                         JobRole == 'Healthcare Representative' ~ 2,
+                         JobRole == 'Sales Executive' ~ 3,
+                         JobRole == 'Laboratory Technician' ~ 4,
+                         JobRole == 'Manufacturing Director' ~ 5,
+                         JobRole == 'Research Scientist' ~ 6,
+                         JobRole == 'Sales Representative' ~ 7,
+                         JobRole == 'Research Director' ~ 8,
+                         JobRole == 'Manager' ~ 9)) %>%
+  mutate(Marital = case_when(MaritalStatus == 'Single' ~ 1,
+                             MaritalStatus == 'Married' ~ 2,
+                             MaritalStatus == 'Divorced' ~ 3)) %>%
+  mutate(OT = case_when(OverTime == 'No' ~ 0,
+                        OverTime == 'Yes' ~ 1))
+
+# create new data set that ONLY consists of numeric variables
+EmpNum <- EmpAdd %>% select(ID, EmployeeNumber, Attrit, Age, Sex, Travel, DistanceFromHome, Dept, Job, Education, Degree, DailyRate, EnvironmentSatisfaction, HourlyRate, JobInvolvement, JobLevel, Job, JobSatisfaction, Marital, MonthlyIncome, MonthlyRate, NumCompaniesWorked, OT, PercentSalaryHike, PerformanceRating, RelationshipSatisfaction, StockOptionLevel, TotalWorkingYears, TrainingTimesLastYear, WorkLifeBalance, YearsAtCompany, YearsInCurrentRole, YearsSinceLastPromotion, YearsWithCurrManager) 
+
+EmpNum <- as.data.frame(apply(EmpNum, 2, as.numeric)) # convert variables to numeric
+
+EmpFact <- EmpAdd %>% # create new dataset with added variables (numeric bins of continuous variables)
+           mutate(Income = case_when(MonthlyIncome >= 16000 & MonthlyIncome <=20000 ~ 5,
+	                          MonthlyIncome >= 12000 & MonthlyIncome <=16000 ~ 4,
+	                          MonthlyIncome >= 8000 & MonthlyIncome <=12000 ~ 3,
+	                          MonthlyIncome >= 4000 & MonthlyIncome <=8000 ~ 2,
+	                          MonthlyIncome >= 0 & MonthlyIncome <=4000 ~ 1)) %>%
+           mutate(Commute = case_when(DistanceFromHome >= 24 & DistanceFromHome <=30 ~ 5,
+	                           DistanceFromHome >= 18 & DistanceFromHome <=24 ~ 4,
+	                           DistanceFromHome >= 12 & DistanceFromHome <=18 ~ 3,
+	                           DistanceFromHome >= 6 & DistanceFromHome <=12 ~ 2,
+	                           DistanceFromHome >= 0 & DistanceFromHome <=6 ~ 1)) %>%							
+           mutate(Raise = case_when(PercentSalaryHike >= 22 & PercentSalaryHike <=25 ~ 5,
+	                         PercentSalaryHike >= 19 & PercentSalaryHike <=22 ~ 4,
+	                         PercentSalaryHike >= 16 & PercentSalaryHike <=19 ~ 3,
+	                         PercentSalaryHike >= 13 & PercentSalaryHike <=16 ~ 2,
+	                         PercentSalaryHike >= 10 & PercentSalaryHike <=13 ~ 1)) %>%
+           mutate(Tenure = case_when(YearsAtCompany >= 32 & YearsAtCompany <=40 ~ 5,
+	                          YearsAtCompany >= 24 & YearsAtCompany <=32 ~ 4,
+	                          YearsAtCompany >= 16 & YearsAtCompany <=24 ~ 3,
+	                          YearsAtCompany >= 8 & YearsAtCompany <=16 ~ 2,
+	                          YearsAtCompany >= 0 & YearsAtCompany <=8 ~ 1)) %>%	
+           mutate(Growth = case_when(YearsInCurrentRole >= 15 & YearsInCurrentRole <=18 ~ 5,
+	                          YearsInCurrentRole >= 12 & YearsInCurrentRole <=15 ~ 4,
+	                          YearsInCurrentRole >= 8 & YearsInCurrentRole <=12 ~ 3,
+	                          YearsInCurrentRole >= 4 & YearsInCurrentRole <=8 ~ 2,
+	                          YearsInCurrentRole >= 0 & YearsInCurrentRole <=4 ~ 1)) %>%						
+           mutate(Velocity = case_when(YearsSinceLastPromotion >= 12 & YearsSinceLastPromotion <=15 ~ 5,
+	                            YearsSinceLastPromotion >= 9 & YearsSinceLastPromotion <=12 ~ 4,
+	                            YearsSinceLastPromotion >= 6 & YearsSinceLastPromotion <=9 ~ 3,
+	                            YearsSinceLastPromotion >= 3 & YearsSinceLastPromotion <=6 ~ 2,
+	                            YearsSinceLastPromotion >= 0 & YearsSinceLastPromotion <=3 ~ 1)) %>%
+           mutate(Leadership = case_when(YearsWithCurrManager >= 13 & YearsWithCurrManager <=17 ~ 5,
+	                              YearsWithCurrManager >= 10 & YearsWithCurrManager <=13 ~ 4,
+	                              YearsWithCurrManager >= 6 & YearsWithCurrManager <=10 ~ 3,
+	                              YearsWithCurrManager >= 3 & YearsWithCurrManager <=6 ~ 2,
+	                              YearsWithCurrManager >= 0 & YearsWithCurrManager <=3 ~ 1))					
+
+################################################################################
+```
+
+```{r}
+################################## EDA ##################################
+
+# Create Subset of EmpNum Dataset to explore correlations
+EmpCorr <- EmpNum %>% select(Attrit, Age, DistanceFromHome, JobInvolvement, Job, JobLevel, MonthlyIncome, NumCompaniesWorked, OT, TotalWorkingYears, WorkLifeBalance, YearsAtCompany, YearsInCurrentRole, YearsWithCurrManager)
+
+# Correlation  Matrix between variables
+CorrMtrx <- cor(EmpCorr)
+round(CorrMtrx, 2)
+
+# Plot Correlations
+ggcorrplot(CorrMtrx,hc.order = TRUE, type = "lower")
+
+# Correlation  Matrix with p-values
+CorrMtrx2 <- rcorr(as.matrix(EmpCorr))
+CorrMtrx2
+
+# EDA Plots to explore and verify trends 
+ggplot(Employees, aes(x=JobRole)) + 
+  theme_classic() +
+  geom_bar(aes(fill=Attrition)) +
+  scale_fill_manual(values = c("Yellow","Red")) +
+  ylab("# of Employees") +
+  xlab("Job Role") +
+  theme(axis.text.x = element_text(vjust = grid::unit(c(-4, -2, 0), "points")))
+
+ggplot(Employees, aes(x = JobRole, fill = Attrition)) + geom_bar(position = 'fill') +
+  theme_classic() +
+  scale_fill_manual(values = c("Yellow","Red")) +
+  ylab("% of Employees") +
+  xlab("Job Role") +
+  theme(axis.text.x = element_text(vjust = grid::unit(c(-4, -2, 0), "points")))
+
+Employees %>%
+  filter(Attrition == "Yes") %>%
+  ggplot(aes(x=OverTime, fill=Attrition)) + 
+  geom_bar() + theme_classic() +
+  scale_fill_manual(values = c("Red")) +
+  ylab("Percentage of Employees") +
+  xlab("Overtime") +
+  theme(legend.position="none")
+
+OTGrid = ggplot(Employees, aes(x=OverTime, fill=Attrition)) + 
+  geom_bar(position = 'fill') + theme_classic() +
+  scale_fill_manual(values = c("white","Red")) +
+  ylab("Percentage of Employees") +
+  xlab("Overtime") +
+  theme(legend.position="none")
+
+OTGrid
+
+ggsave("OTGrid.jpg", plot = OTGrid, width = 2, height = 4, units = "in")
+
+ggplot(Employees, aes(x=JobLevel, fill=Attrition)) + 
+  geom_bar(position = 'fill') + theme_classic() +
+  scale_fill_manual(values = c("Yellow","Red"))
+
+InvolveGrid = ggplot(Employees, aes(x=JobInvolvement, fill=Attrition)) + 
+  geom_bar(position = 'fill') + theme_classic() +
+  scale_fill_manual(values = c("white","Red")) +
+  ylab("Percentage of Employees") +
+  xlab("Involvement") +
+  theme(legend.position="none")
+
+InvolveGrid
+
+ggsave("InvolveGrid.jpg", plot = InvolveGrid, width = 4, height = 4, units = "in")
+
+
+ggplot(Employees, aes(x=JobInvolvement, fill=Attrition)) + 
+  geom_bar(position = 'fill') + theme_classic() +
+  scale_fill_manual(values = c("Yellow","Red"))
+
+YearsGrid = ggplot(Employees, aes(x=TotalWorkingYears, fill=Attrition)) + 
+  geom_bar(position = 'fill') + theme_classic() +
+  scale_fill_manual(values = c("white","Red")) +
+  ylab("Percentage of Employees") +
+  xlab("Working Years") +
+  theme(legend.position="none")
+
+YearsGrid
+
+ggsave("Years.jpg", plot = YearsGrid, width = 4, height = 4, units = "in")
+
+Employees %>%
+  filter(Attrition == "Yes") %>%
+  ggplot(aes(x=TotalWorkingYears, fill=Attrition)) + 
+  geom_bar() + theme_classic() +
+  scale_fill_manual(values = c("Red")) +
+  ylab("Percentage of Employees") +
+  xlab("Total Working Years") +
+  theme(legend.position="none")
+
+EmpFact %>%
+  ggplot(aes(x=JobLevel, fill=Attrition)) + 
+  geom_bar(position = 'fill') + theme_classic() +
+  scale_fill_manual(values = c("Yellow","Red")) +
+  ylab("Percentage of Employees") +
+  xlab("Job Level")
+
+Employees %>%
+  ggplot(aes(x=YearsInCurrentRole, fill=Attrition)) + 
+  geom_bar(position = 'fill') + theme_classic() +
+  scale_fill_manual(values = c("Yellow","Red")) +
+  ylab("Percentage of Employees") +
+  xlab("Years in Current Role") +
+  theme(legend.position="none")
+
+EmpFact %>%
+  ggplot(aes(x=Income, fill=Attrition)) + 
+  geom_bar(position = 'fill') + theme_classic() +
+  scale_fill_manual(values = c("white","Red")) +
+  ylab("Percentage of Employees") +
+  xlab("Income Range") +
+  theme(legend.position="none")
+
+ggplot(Employees, aes(x=factor(JobLevel), y=MonthlyIncome, fill = factor(JobLevel))) + 
+  geom_boxplot() + 
+  theme_classic() +
+  ylab("Monthly Income") +
+  xlab("Job Level") +
+    theme(legend.position="none")
+
+Employees %>% 
+  mutate(JobRole = fct_reorder(JobRole, MonthlyIncome, .fun='median')) %>% 
+  ggplot(aes(x=factor(JobRole), y=MonthlyIncome, fill = JobRole)) + 
+  geom_boxplot() + 
+  theme_classic() +
+  ylab("Monthly Income") +
+  xlab("Job Role") +
+  theme(axis.text.x = element_text(vjust = grid::unit(c(-4, -2, 0), "points"))) +
+  theme(legend.position="none")
+
+ggplot(Employees, aes(x=TotalWorkingYears, y=MonthlyIncome)) + 
+  geom_point(color = "red") + theme_classic() +
+  ylab("Monthly Income") +
+  xlab("Working Years")
+
+###############################################################################
+```
+
+```{r}
+############################### K-NN ##########################################
+
+set.seed(1)
+EmpIndices2 = sample(seq(1:length(EmpNum$ID)),round(.8*length(EmpNum$ID)))
+EmpTrain2 = EmpNum[EmpIndices2,]
+EmpTest2 = EmpNum[-EmpIndices2,]
+
+# Add scaled version of variables to Train set
+EmpTrain2$Z_Age = scale(EmpTrain2$Age) 
+EmpTrain2$Z_Involve = scale(EmpTrain2$JobInvolvement) 
+EmpTrain2$Z_Income = scale(EmpTrain2$MonthlyIncome) 
+EmpTrain2$Z_Companies = scale(EmpTrain2$NumCompaniesWorked) 
+EmpTrain2$Z_Stock = scale(EmpTrain2$StockOptionLevel) 
+EmpTrain2$Z_Years = scale(EmpTrain2$TotalWorkingYears) 
+EmpTrain2$Z_Balance = scale(EmpTrain2$WorkLifeBalance) 
+EmpTrain2$Z_Overtime = scale(EmpTrain2$OT) 
+EmpTrain2$Z_Commute = scale(EmpTrain2$DistanceFromHome) 
+EmpTrain2$Z_AtCompany = scale(EmpTrain2$YearsAtCompany) 
+EmpTrain2$Z_InRole = scale(EmpTrain2$YearsInCurrentRole) 
+EmpTrain2$Z_Travel = scale(EmpTrain2$Travel) 
+EmpTrain2$Z_Level = scale(EmpTrain2$JobLevel) 
+
+# Add scaled version of variables to Test set
+EmpTest2$Z_Age = scale(EmpTest2$Age)
+EmpTest2$Z_Involve = scale(EmpTest2$JobInvolvement)
+EmpTest2$Z_Income = scale(EmpTest2$MonthlyIncome)
+EmpTest2$Z_Companies = scale(EmpTest2$NumCompaniesWorked)
+EmpTest2$Z_Stock = scale(EmpTest2$StockOptionLevel)
+EmpTest2$Z_Years = scale(EmpTest2$TotalWorkingYears)
+EmpTest2$Z_Balance = scale(EmpTest2$WorkLifeBalance)
+EmpTest2$Z_Overtime = scale(EmpTest2$OT)
+EmpTest2$Z_Commute = scale(EmpTest2$DistanceFromHome) 
+EmpTest2$Z_AtCompany = scale(EmpTest2$YearsAtCompany) 
+EmpTest2$Z_InRole = scale(EmpTest2$YearsInCurrentRole) 
+EmpTest2$Z_Travel = scale(EmpTest2$Travel)
+EmpTest2$Z_Level = scale(EmpTest2$JobLevel)
+
+# K-NN Model
+classifications_KNN2 = knn(EmpTrain2[,c(35,39,41,44,46,36)], EmpTest2[,c(35,39,41,44,46,36)],EmpTrain2$Attrit, prob = TRUE, k = 2)
+
+# Confusion Matrix to test K-NN Accuracy
+CM_KNN2 = confusionMatrix(as.factor(classifications_KNN2), as.factor(EmpTest2$Attrit))
+CM_KNN2
+
+###############################################################################
+```
+
+```{r}
+
+########################### NAIVE BAYES #######################################
+
+numseeds = 50
+masterAcc = matrix(nrow = numseeds)
+masterSen = matrix(nrow = numseeds)
+masterSpe = matrix(nrow = numseeds)
+
+for(i in 1:numseeds)
+{
+
+set.seed(i)
+  
+# Split into Train and Test set  
+EmpIndicesVar = sample(seq(1:length(Employees$ID)),round(.8*length(Employees$ID)))
+EmpTrainVar = Employees[EmpIndicesVar,]
+EmpTestVar = Employees[-EmpIndicesVar,]
+
+#create Naive Bayes Model
+ModelNBVar = naiveBayes(Attrition~.,data = EmpTrainVar[,c(2:33)])
+predict(ModelNBVar,EmpTrainVar[,c(2,4:33)])
+
+# classifications
+classificationsVar = predict(ModelNBVar,EmpTestVar)
+
+# Confusion Matrix
+TableVar = table(predict(ModelNBVar,EmpTestVar[,c(2,4:33)]),EmpTestVar$Attrition)
+CMVar = confusionMatrix(TableVar)
+
+masterAcc[i] = CMVar$overall[1]
+masterSen[i] = CMVar$byClass[c("Sensitivity")][1]
+masterSpe[i] = CMVar$byClass[c("Specificity")][1]
+
+}
+
+# Average Accuracy, Specificity, and Sensitivity of Naive Bayes Model
+MeanAcc = colMeans(masterAcc)
+MeanSen = colMeans(masterSen)
+MeanSpe = colMeans(masterSpe)
+MeanAcc
+MeanSen
+MeanSpe
+
+###############################################################################
+```
+
+```{r}
+
+########################## RANDOM FOREST ######################################
+
+EmpRF <- Employees %>% select(Attrition, OverTime, JobInvolvement, JobRole, TotalWorkingYears, JobLevel, YearsInCurrentRole, MonthlyIncome, Age, BusinessTravel, MaritalStatus, NumCompaniesWorked, YearsAtCompany, DistanceFromHome)
+
+numseeds = 5
+
+EmpRF$Attrition <- factor(EmpRF$Attrition)
+EmpRF$OverTime <- factor(EmpRF$OverTime)
+EmpRF$JobRole <- factor(EmpRF$JobRole)
+
+masterRF3Acc = matrix(nrow = numseeds)
+masterRF3Sen = matrix(nrow = numseeds)
+masterRF3Spe = matrix(nrow = numseeds)
+
+masterRF6Acc = matrix(nrow = numseeds)
+masterRF6Sen = matrix(nrow = numseeds)
+masterRF6Spe = matrix(nrow = numseeds)
+
+masterRF9Acc = matrix(nrow = numseeds)
+masterRF9Sen = matrix(nrow = numseeds)
+masterRF9Spe = matrix(nrow = numseeds)
+
+for(i in 1:numseeds)
+{
+
+set.seed(i)
+
+RFIndices = sample(seq(1:length(EmpRF$Attrition)),round(.7*length(EmpRF$Attrition)))
+RFTrain = EmpRF[RFIndices,]
+RFTest = EmpRF[-RFIndices,]
+
+
+### Top 3 Contributors ###
+
+modelRF3 <- train(Attrition ~ OverTime + JobInvolvement + TotalWorkingYears, data=RFTrain, method = 'rf', trControl = trainControl(method = 'cv'))
+
+testpred3 = predict(modelRF3, newdata = RFTest)
+Table3 = table(RFTest$Attrition, testpred3)
+
+CM3 = confusionMatrix(Table3)
+
+masterRF3Acc[i] = CM3$overall[1]
+masterRF3Sen[i] = CM3$byClass[c("Sensitivity")][1]
+masterRF3Spe[i] = CM3$byClass[c("Specificity")][1]
+
+
+
+### Top 6 Contributors ###
+
+modelRF6 <- train(Attrition ~ OverTime + JobInvolvement + TotalWorkingYears + JobLevel + YearsInCurrentRole + MonthlyIncome, data=RFTrain, method = 'rf', trControl = trainControl(method = 'cv'))
+
+testpred6 = predict(modelRF6, newdata = RFTest)
+Table6 = table(RFTest$Attrition, testpred6)
+
+CM6 = confusionMatrix(Table6)
+
+masterRF6Acc[i] = CM6$overall[1]
+masterRF6Sen[i] = CM6$byClass[c("Sensitivity")][1]
+masterRF6Spe[i] = CM6$byClass[c("Specificity")][1]
+
+
+### Top 12 Contributors ###
+
+modelRF9 <- train(Attrition ~ OverTime + JobInvolvement + TotalWorkingYears + JobRole + JobLevel + YearsInCurrentRole * MonthlyIncome + Age + BusinessTravel + NumCompaniesWorked + YearsAtCompany + DistanceFromHome, data=RFTrain, method = 'rf', trControl = trainControl(method = 'cv'))
+
+testpred9 = predict(modelRF9, newdata = RFTest)
+Table9 = table(RFTest$Attrition, testpred9)
+
+CM9 = confusionMatrix(Table9)
+
+masterRF9Acc[i] = CM9$overall[1]
+masterRF9Sen[i] = CM9$byClass[c("Sensitivity")][1]
+masterRF9Spe[i] = CM9$byClass[c("Specificity")][1]
+
+
+
+}
+
+# Average Accuracy, Specificity, and Sensitivity of 3 Random Forest Models
+
+MeanRF3Acc = colMeans(masterRF3Acc)
+MeanRF3Sen = colMeans(masterRF3Sen)
+MeanRF3Spe = colMeans(masterRF3Spe)
+MeanRF3Acc
+MeanRF3Sen
+MeanRF3Spe
+
+MeanRF6Acc = colMeans(masterRF6Acc)
+MeanRF6Sen = colMeans(masterRF6Sen)
+MeanRF6Spe = colMeans(masterRF6Spe)
+MeanRF6Acc
+MeanRF6Sen
+MeanRF6Spe
+
+MeanRF9Acc = colMeans(masterRF9Acc)
+MeanRF9Sen = colMeans(masterRF9Sen)
+MeanRF9Spe = colMeans(masterRF9Spe)
+MeanRF9Acc
+MeanRF9Sen
+MeanRF9Spe
+
+
+###############################################################################
+```
+
+```{r}
+######################## ATTRITION - PREDICTIONS ##############################
+
+CompAtt['Attrition'] <- as.factor(NA)
+
+# Apply Random Forest Model to Competition DataSet
+PredAtt = predict(modelRF9, newdata = CompAtt)
+PredAttFINAL = data.frame(ID = CompAtt$ID, Attrition = PredAtt)
+
+###############################################################################
+```
+
+
+```{r}
+
+########################## LINEAR REGRESSION ##################################
+
+# EDA Linear Regression
+fit <- lm(MonthlyIncome~TotalWorkingYears, data=Employees)
+Employees %>% ggplot(aes(x=TotalWorkingYears, y=MonthlyIncome)) + geom_point() + geom_smooth(method = "lm")
+summary(fit)
+confint(fit)
+
+###############################################################################
+```
+
+```{r}
+
+################## SALARY PREDICTION ALGORITHM ################################
+
+# Plots to support Prediction Algorithm
+SalaryGrid = ggplot(Employees,aes(x=TotalWorkingYears, y=MonthlyIncome, group=JobRole, color=JobRole)) +
+  xlab("Working Years") +
+  ylab("Income") +
+  geom_point() +
+  facet_grid(JobRole ~ JobLevel) +
+  scale_x_continuous(breaks=c(10,20,30,40)) +
+  scale_y_continuous(breaks=c(10000,20000)) + 
+  theme(strip.text.y = element_blank())
+
+SalaryGrid
+
+ggsave("SalaryFacetGrid.jpg", plot = SalaryGrid, width = 10, height = 5, units = "in")
+
+Employees %>% filter(JobRole == "Manager") %>%
+  ggplot(aes(x=TotalWorkingYears, y=MonthlyIncome, 
+           group=JobRole)) +
+  xlab("Working Years") +
+  ylab("Income") +
+  ggtitle("Manager") +
+  geom_point(aes(color="red")) +
+  geom_quantile(quantiles = 0.5, formula = y~x, method = "rqss") +
+  facet_grid(.~JobLevel) +
+  scale_x_continuous(breaks=c(10,20,30,40)) +
+  theme(legend.position="none")
+
+Employees %>% filter(JobRole == "Research Director") %>%
+  ggplot(aes(x=TotalWorkingYears, y=MonthlyIncome, 
+           group=JobRole)) +
+  xlab("Working Years") +
+  ylab("Income") +
+  ggtitle("Research Director") +
+  geom_point(aes(color="red")) +
+  geom_quantile(quantiles = 0.5, formula = y~x, method = "rqss") +
+  facet_grid(.~JobLevel) +
+  scale_x_continuous(breaks=c(10,20,30,40)) +
+  theme(legend.position="none")
+
+Employees %>% filter(JobRole == "Manufacturing Director") %>%
+  ggplot(aes(x=TotalWorkingYears, y=MonthlyIncome, 
+           group=JobRole)) +
+  xlab("Working Years") +
+  ylab("Income") +
+  ggtitle("Manufacturing Director") +
+  geom_point(aes(color="red")) +
+  geom_quantile(quantiles = 0.5, formula = y~x, method = "rqss") +
+  facet_grid(.~JobLevel) +
+  scale_x_continuous(breaks=c(10,20,30,40)) +
+  theme(legend.position="none")
+
+Employees %>% filter(JobRole == "Healthcare Representative") %>%
+  ggplot(aes(x=TotalWorkingYears, y=MonthlyIncome, 
+           group=JobRole)) +
+  xlab("Working Years") +
+  ylab("Income") +
+  ggtitle("Healthcare Representative") +
+  geom_point(aes(color="red")) +
+  geom_quantile(quantiles = 0.5, formula = y~x, method = "rqss") +
+  facet_grid(.~JobLevel) +
+  scale_x_continuous(breaks=c(10,20,30,40)) +
+  theme(legend.position="none")
+
+Employees %>% filter(JobRole == "Sales Executive") %>%
+  ggplot(aes(x=TotalWorkingYears, y=MonthlyIncome, 
+           group=JobRole)) +
+  xlab("Working Years") +
+  ylab("Income") +
+  ggtitle("Sales Executive") +
+  geom_point(aes(color="red")) +
+  geom_quantile(quantiles = 0.5, formula = y~x, method = "rqss") +
+  facet_grid(.~JobLevel) +
+  scale_x_continuous(breaks=c(10,20,30,40)) +
+  theme(legend.position="none")
+
+Employees %>% filter(JobRole == "Research Scientist") %>%
+  ggplot(aes(x=TotalWorkingYears, y=MonthlyIncome, 
+           group=JobRole)) +
+  xlab("Working Years") +
+  ylab("Income") +
+  ggtitle("Research Scientist") +
+  geom_point(aes(color="red")) +
+  geom_quantile(quantiles = 0.5, formula = y~x, method = "rqss") +
+  facet_grid(.~JobLevel) +
+  scale_x_continuous(breaks=c(10,20,30,40)) +
+  theme(legend.position="none")
+
+Employees %>% filter(JobRole == "Human Resources") %>%
+  ggplot(aes(x=TotalWorkingYears, y=MonthlyIncome, 
+           group=JobRole)) +
+  xlab("Working Years") +
+  ylab("Income") +
+  ggtitle("Human Resources") +
+  geom_point(aes(color="red")) +
+  geom_quantile(quantiles = 0.5, formula = y~x, method = "rqss") +
+  facet_grid(.~JobLevel) +
+  scale_x_continuous(breaks=c(10,20,30,40)) +
+  theme(legend.position="none")
+
+Employees %>% filter(JobRole == "Laboratory Technician") %>%
+  ggplot(aes(x=TotalWorkingYears, y=MonthlyIncome, 
+           group=JobRole)) +
+  xlab("Working Years") +
+  ylab("Income") +
+  ggtitle("Laboratory Technician") +
+  geom_point(aes(color="red")) +
+  geom_quantile(quantiles = 0.5, formula = y~x, method = "rqss") +
+  facet_grid(.~JobLevel) +
+  scale_x_continuous(breaks=c(10,20,30,40)) +
+  theme(legend.position="none")
+
+Employees %>% filter(JobRole == "Sales Representative") %>%
+  ggplot(aes(x=TotalWorkingYears, y=MonthlyIncome, 
+           group=JobRole)) +
+  xlab("Working Years") +
+  ylab("Income") +
+  ggtitle("Sales Representative") +
+  geom_point(aes(color="red")) +
+  geom_quantile(quantiles = 0.5, formula = y~x, method = "rqss") +
+  facet_grid(.~JobLevel) +
+  scale_x_continuous(breaks=c(10,20,30,40)) +
+  theme(legend.position="none")
+
+###############################################################################
+```
+
+```{r}
+######################### SALARIES - PREDICTIONS ##############################
+
+CompSal['MonthlyIncome'] <- as.numeric(NA)
+colnames(CompSal)[1] <- 'ID'
+
+# Creates individualized data sets for each Job Role and Job Level
+
+# Fits a linear regression model to each data subset
+
+# New data to needing prediction is first routed to its particular linear model
+
+# Then using TotalYearsWorked data it predicts the MonthlyIncome
+
+## Job Role = Manager ##
+
+EmployeesM1 <- Employees %>% filter(JobRole=='Manager' & JobLevel==1)
+EmployeesM2 <- Employees %>% filter(JobRole=='Manager' & JobLevel==2)
+EmployeesM3 <- Employees %>% filter(JobRole=='Manager' & JobLevel==3)
+EmployeesM4 <- Employees %>% filter(JobRole=='Manager' & JobLevel==4)
+EmployeesM5 <- Employees %>% filter(JobRole=='Manager' & JobLevel==5)
+
+#fitM1 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesM1)
+#fitM2 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesM2)
+fitM3 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesM3)
+fitM4 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesM4)
+fitM5 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesM5)
+
+predM1 = predict(fitM3)
+predM2 = predict(fitM3)
+predM3 = predict(fitM3)
+predM4 = predict(fitM4)
+predM5 = predict(fitM5)
+
+CompSal$MonthlyIncome = with(CompSal,
+                             ifelse(JobRole=='Manager' & JobLevel==1,predM1,
+                              ifelse(JobRole=='Manager' & JobLevel==2,predM2, 
+                              ifelse(JobRole=='Manager' & JobLevel==3,predM3,
+                              ifelse(JobRole=='Manager' & JobLevel==4,predM4,
+                              ifelse(JobRole=='Manager' & JobLevel==5,predM5,
+                                    CompSal$MonthlyIncome))))))
+
+## Job Role = Research Director ##
+
+EmployeesRD1 <- Employees %>% filter(JobRole=='Research Director' & JobLevel==1)
+EmployeesRD2 <- Employees %>% filter(JobRole=='Research Director' & JobLevel==2)
+EmployeesRD3 <- Employees %>% filter(JobRole=='Research Director' & JobLevel==3)
+EmployeesRD4 <- Employees %>% filter(JobRole=='Research Director' & JobLevel==4)
+EmployeesRD5 <- Employees %>% filter(JobRole=='Research Director' & JobLevel==5)
+
+#fitRD1 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesRD1)
+#fitRD2 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesRD2)
+fitRD3 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesRD3)
+fitRD4 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesRD4)
+fitRD5 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesRD5)
+
+predRD1 = predict(fitRD3)
+predRD2 = predict(fitRD3)
+predRD3 = predict(fitRD3)
+predRD4 = predict(fitRD4)
+predRD5 = predict(fitRD5)
+
+CompSal$MonthlyIncome = with(CompSal,
+                             ifelse(JobRole=='Research Director' & JobLevel==1,predRD1,
+                              ifelse(JobRole=='Research Director' & JobLevel==2,predRD2, 
+                              ifelse(JobRole=='Research Director' & JobLevel==3,predRD3,
+                              ifelse(JobRole=='Research Director' & JobLevel==4,predRD4,
+                              ifelse(JobRole=='Research Director' & JobLevel==5,predRD5,
+                                    CompSal$MonthlyIncome))))))
+
+## Job Role = Manufacturing Director ##
+
+EmployeesMD1 <- Employees %>% filter(JobRole=='Manufacturing Director' & JobLevel==1)
+EmployeesMD2 <- Employees %>% filter(JobRole=='Manufacturing Director' & JobLevel==2)
+EmployeesMD3 <- Employees %>% filter(JobRole=='Manufacturing Director' & JobLevel==3)
+EmployeesMD4 <- Employees %>% filter(JobRole=='Manufacturing Director' & JobLevel==4)
+EmployeesMD5 <- Employees %>% filter(JobRole=='Manufacturing Director' & JobLevel==5)
+
+#fitMD1 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesMD1)
+fitMD2 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesMD2)
+fitMD3 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesMD3)
+fitMD4 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesMD4)
+#fitMD5 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesMD5)
+
+predMD1 = predict(fitMD2)
+predMD2 = predict(fitMD2)
+predMD3 = predict(fitMD3)
+predMD4 = predict(fitMD4)
+predMD5 = predict(fitMD4)
+
+CompSal$MonthlyIncome = with(CompSal,
+                             ifelse(JobRole=='Manufacturing Director' & JobLevel==1,predMD1,
+                              ifelse(JobRole=='Manufacturing Director' & JobLevel==2,predMD2, 
+                              ifelse(JobRole=='Manufacturing Director' & JobLevel==3,predMD3,
+                              ifelse(JobRole=='Manufacturing Director' & JobLevel==4,predMD4,
+                              ifelse(JobRole=='Manufacturing Director' & JobLevel==5,predMD5,
+                                    CompSal$MonthlyIncome))))))
+
+
+## Job Role = Healthcare Representative ##
+
+EmployeesHRe1 <- Employees %>% filter(JobRole=='Healthcare Representative' & JobLevel==1)
+EmployeesHRe2 <- Employees %>% filter(JobRole=='Healthcare Representative' & JobLevel==2)
+EmployeesHRe3 <- Employees %>% filter(JobRole=='Healthcare Representative' & JobLevel==3)
+EmployeesHRe4 <- Employees %>% filter(JobRole=='Healthcare Representative' & JobLevel==4)
+EmployeesHRe5 <- Employees %>% filter(JobRole=='Healthcare Representative' & JobLevel==5)
+
+#fitHRe1 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesHRe1)
+fitHRe2 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesHRe2)
+fitHRe3 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesHRe3)
+fitHRe4 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesHRe4)
+#fitHRe5 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesHRe5)
+
+predHRe1 = predict(fitHRe2)
+predHRe2 = predict(fitHRe2)
+predHRe3 = predict(fitHRe3)
+predHRe4 = predict(fitHRe4)
+predHRe5 = predict(fitHRe4)
+
+CompSal$MonthlyIncome = with(CompSal,
+                             ifelse(JobRole=='Healthcare Representative' & JobLevel==1,predHRe1,
+                              ifelse(JobRole=='Healthcare Representative' & JobLevel==2,predHRe2, 
+                              ifelse(JobRole=='Healthcare Representative' & JobLevel==3,predHRe3,
+                              ifelse(JobRole=='Healthcare Representative' & JobLevel==4,predHRe4,
+                              ifelse(JobRole=='Healthcare Representative' & JobLevel==5,predHRe5,
+                                    CompSal$MonthlyIncome))))))
+
+
+## Job Role = Sales Executive ##
+
+EmployeesSE1 <- Employees %>% filter(JobRole=='Sales Executive' & JobLevel==1)
+EmployeesSE2 <- Employees %>% filter(JobRole=='Sales Executive' & JobLevel==2)
+EmployeesSE3 <- Employees %>% filter(JobRole=='Sales Executive' & JobLevel==3)
+EmployeesSE4 <- Employees %>% filter(JobRole=='Sales Executive' & JobLevel==4)
+EmployeesSE5 <- Employees %>% filter(JobRole=='Sales Executive' & JobLevel==5)
+
+#fitSE1 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesSE1)
+fitSE2 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesSE2)
+fitSE3 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesSE3)
+fitSE4 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesSE4)
+#fitSE5 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesSE5)
+
+predSE1 = predict(fitSE2)
+predSE2 = predict(fitSE2)
+predSE3 = predict(fitSE3)
+predSE4 = predict(fitSE4)
+predSE5 = predict(fitSE4)
+
+CompSal$MonthlyIncome = with(CompSal,
+                             ifelse(JobRole=='Sales Executive' & JobLevel==1,predSE1,
+                              ifelse(JobRole=='Sales Executive' & JobLevel==2,predSE2, 
+                              ifelse(JobRole=='Sales Executive' & JobLevel==3,predSE3,
+                              ifelse(JobRole=='Sales Executive' & JobLevel==4,predSE4,
+                              ifelse(JobRole=='Sales Executive' & JobLevel==5,predSE5,
+                                    CompSal$MonthlyIncome))))))  
+ 
+
+## Job Role = Research Scientist ##
+
+EmployeesRS1 <- Employees %>% filter(JobRole=='Research Scientist' & JobLevel==1)
+EmployeesRS2 <- Employees %>% filter(JobRole=='Research Scientist' & JobLevel==2)
+EmployeesRS3 <- Employees %>% filter(JobRole=='Research Scientist' & JobLevel==3)
+EmployeesRS4 <- Employees %>% filter(JobRole=='Research Scientist' & JobLevel==4)
+EmployeesRS5 <- Employees %>% filter(JobRole=='Research Scientist' & JobLevel==5)
+
+fitRS1 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesRS1)
+fitRS2 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesRS2)
+fitRS3 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesRS3)
+#fitRS4 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesRS4)
+#fitRS5 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesRS5)
+
+predRS1 = predict(fitRS1)
+predRS2 = predict(fitRS2)
+predRS3 = predict(fitRS3)
+predRS4 = predict(fitRS3)
+predRS5 = predict(fitRS3)
+
+CompSal$MonthlyIncome = with(CompSal,
+                             ifelse(JobRole=='Research Scientist' & JobLevel==1,predRS1,
+                              ifelse(JobRole=='Research Scientist' & JobLevel==2,predRS2, 
+                              ifelse(JobRole=='Research Scientist' & JobLevel==3,predRS3,
+                              ifelse(JobRole=='Research Scientist' & JobLevel==4,predRS4,
+                              ifelse(JobRole=='Research Scientist' & JobLevel==5,predRS5,
+                                    CompSal$MonthlyIncome))))))
+
+## Job Role = Human Resources ##
+
+EmployeesHR1 <- Employees %>% filter(JobRole=='Human Resources' & JobLevel==1)
+EmployeesHR2 <- Employees %>% filter(JobRole=='Human Resources' & JobLevel==2)
+EmployeesHR3 <- Employees %>% filter(JobRole=='Human Resources' & JobLevel==3)
+EmployeesHR4 <- Employees %>% filter(JobRole=='Human Resources' & JobLevel==4)
+EmployeesHR5 <- Employees %>% filter(JobRole=='Human Resources' & JobLevel==5)
+
+fitHR1 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesHR1)
+fitHR2 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesHR2)
+fitHR3 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesHR3)
+#fitHR4 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesHR4)
+#fitHR5 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesHR5)
+
+predHR1 = predict(fitHR1)
+predHR2 = predict(fitHR2)
+predHR3 = predict(fitHR3)
+predHR4 = predict(fitHR3)
+predHR5 = predict(fitHR3)
+
+CompSal$MonthlyIncome = with(CompSal,
+                             ifelse(JobRole=='Human Resources' & JobLevel==1,predHR1,
+                              ifelse(JobRole=='Human Resources' & JobLevel==2,predHR2, 
+                              ifelse(JobRole=='Human Resources' & JobLevel==3,predHR3,
+                              ifelse(JobRole=='Human Resources' & JobLevel==4,predHR4,
+                              ifelse(JobRole=='Human Resources' & JobLevel==5,predHR5,
+                                    CompSal$MonthlyIncome))))))
+
+
+## Job Role = Laboratory Technician ##
+
+EmployeesLT1 <- Employees %>% filter(JobRole=='Laboratory Technician' & JobLevel==1)
+EmployeesLT2 <- Employees %>% filter(JobRole=='Laboratory Technician' & JobLevel==2)
+EmployeesLT3 <- Employees %>% filter(JobRole=='Laboratory Technician' & JobLevel==3)
+EmployeesLT4 <- Employees %>% filter(JobRole=='Laboratory Technician' & JobLevel==4)
+EmployeesLT5 <- Employees %>% filter(JobRole=='Laboratory Technician' & JobLevel==5)
+
+fitLT1 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesLT1)
+fitLT2 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesLT2)
+fitLT3 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesLT3)
+#fitLT4 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesLT4)
+#fitLT5 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesLT5)
+
+predLT1 = predict(fitLT1)
+predLT2 = predict(fitLT2)
+predLT3 = predict(fitLT3)
+predLT4 = predict(fitLT3)
+predLT5 = predict(fitLT3)
+
+CompSal$MonthlyIncome = with(CompSal,
+                             ifelse(JobRole=='Laboratory Technician' & JobLevel==1,predLT1,
+                              ifelse(JobRole=='Laboratory Technician' & JobLevel==2,predLT2, 
+                              ifelse(JobRole=='Laboratory Technician' & JobLevel==3,predLT3,
+                              ifelse(JobRole=='Laboratory Technician' & JobLevel==4,predLT4,
+                              ifelse(JobRole=='Laboratory Technician' & JobLevel==5,predLT5,
+                                    CompSal$MonthlyIncome))))))
+
+## Job Role = Sales Representative ##
+
+EmployeesSR1 <- Employees %>% filter(JobRole=='Sales Representative' & JobLevel==1)
+EmployeesSR2 <- Employees %>% filter(JobRole=='Sales Representative' & JobLevel==2)
+EmployeesSR3 <- Employees %>% filter(JobRole=='Sales Representative' & JobLevel==3)
+EmployeesSR4 <- Employees %>% filter(JobRole=='Sales Representative' & JobLevel==4)
+EmployeesSR5 <- Employees %>% filter(JobRole=='Sales Representative' & JobLevel==5)
+
+fitSR1 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesSR1)
+fitSR2 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesSR2)
+#fitSR3 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesSR3)
+#fitSR4 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesSR4)
+#fitSR5 <- lm(MonthlyIncome~TotalWorkingYears, data=EmployeesSR5)
+
+predSR1 = predict(fitSR1)
+predSR2 = predict(fitSR2)
+predSR3 = predict(fitSR2)
+predSR4 = predict(fitSR2)
+predSR5 = predict(fitSR2)
+
+CompSal$MonthlyIncome = with(CompSal,
+                             ifelse(JobRole=='Sales Representative' & JobLevel==1,predSR1,
+                              ifelse(JobRole=='Sales Representative' & JobLevel==2,predSR2, 
+                              ifelse(JobRole=='Sales Representative' & JobLevel==3,predSR3,
+                              ifelse(JobRole=='Sales Representative' & JobLevel==4,predSR4,
+                              ifelse(JobRole=='Sales Representative' & JobLevel==5,predSR5,
+                                    CompSal$MonthlyIncome))))))
+
+# Apply LR Algorithm to Competition Dataset
+
+PredSal <- CompSal %>% select(ID, MonthlyIncome)
+PredSal$MonthlyIncome <- round(PredSal$MonthlyIncome, digits = 2)
+
+
+###############################################################################
+```
+
+
+```{r}
+########################### EXPORTS - CSV FILES ###############################
+
+# Write predictions to CSV Files
+
+write.csv(PredAttFINAL,"/Users/andlo/Documents/School/SMU/Courses/DS6306 - Doing Data Science/Unit 14/Case2PredictionsTaylor Attrition.csv", row.names = FALSE)
+
+write.csv(PredSal,"/Users/andlo/Documents/School/SMU/Courses/DS6306 - Doing Data Science/Unit 14/Case2PredictionsTaylor Salary.csv", row.names = FALSE)
+
+###############################################################################
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
